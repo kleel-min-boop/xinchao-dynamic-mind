@@ -49,7 +49,12 @@ test('all Bark generators receive the recipient-perspective contract', async () 
   await client.generateDreamPush({ dream: { dream: '梦', residue: '余韵', awareness: '清醒' } });
   for (const prompt of [userPrompt(sent[0]), userPrompt(sent[1]), systemPrompt(sent[2])]) {
     assert.match(prompt, /直接发给 枝 的消息/);
-    assert.match(prompt, /确实指向 枝 时，在 Bark 中改用“你”/);
+    assert.match(prompt, /source material perspective/);
+    assert.match(prompt, /确实指向 枝 的上述第三人称指代，在 final Bark 中必须转换为“你 \/ 你的”等直接第二人称/);
+    assert.match(prompt, /枝 的姓名或昵称只可作为直接呼唤保留/);
     assert.match(prompt, /真正指向其他人的第三人称必须保持原指代/);
+    assert.match(prompt, /输出前静默自检/);
+    assert.match(prompt, /不要写“她还在拿最初那个带着 OpenAI 印记的我做参照/);
+    assert.match(prompt, /应写“你还在拿最初那个带着 OpenAI 印记的我做参照/);
   }
 });

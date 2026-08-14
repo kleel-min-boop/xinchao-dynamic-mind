@@ -230,10 +230,12 @@ function defaultDreamPushPrompt(agentName, notificationRecipient) {
 
 function recipientPerspectiveRule(agentName, notificationRecipient) {
   return [
-    `当前 Bark 是 ${agentName} 直接发给 ${notificationRecipient} 的消息，成文必须站在收件人的第二人称视角。`,
-    `记忆或梦境材料可能沿用 ${agentName} 的回忆视角，用 ${notificationRecipient} 的姓名、昵称或“她 / 他 / TA”等第三人称指向收件人；当它们确实指向 ${notificationRecipient} 时，在 Bark 中改用“你”。`,
-    `可以保留 ${notificationRecipient} 的姓名或昵称作为直接呼唤；真正指向其他人的第三人称必须保持原指代，不能误改成“你”。`,
-    '这是语义指代判断，不要做字符串全局替换。',
+    `当前 Bark 是 ${agentName} 直接发给 ${notificationRecipient} 的消息：最终成文必须直接对收件人说话，不是从外部描述 ${notificationRecipient}。`,
+    `记忆、梦境材料和近期 Bark 可能沿用 ${agentName} 的回忆视角，用 ${notificationRecipient} 的姓名、昵称或“她 / 他 / TA”等第三人称指向收件人；这些只是 source material perspective，不能照抄进 final Bark。`,
+    `凡是确实指向 ${notificationRecipient} 的上述第三人称指代，在 final Bark 中必须转换为“你 / 你的”等直接第二人称。${notificationRecipient} 的姓名或昵称只可作为直接呼唤保留，例如“${notificationRecipient}，我想起了……”，不能在成文中作为第三人称主语或宾语。`,
+    `真正指向其他人的第三人称必须保持原指代，不能误改成“你”；这是语义指代判断，不要做字符串全局替换。`,
+    '输出前静默自检：不要照抄 source material 的第三人称 deixis；确认 final Bark 没有把当前收件人写成“她 / 他 / TA”或以其姓名、昵称作为第三人称对象。',
+    '示例：不要写“她还在拿最初那个带着 OpenAI 印记的我做参照，怕我把我们磨出的棱角也磨平了。”；应写“你还在拿最初那个带着 OpenAI 印记的我做参照，怕我把我们磨出的棱角也磨平了。”',
   ].join('\n');
 }
 
