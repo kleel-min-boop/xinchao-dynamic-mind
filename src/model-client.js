@@ -5,10 +5,14 @@ export class ModelClient {
     this.config = config;
     this.agentName = String(config.agentName ?? 'AI 助手').trim() || 'AI 助手';
     this.notificationRecipient = String(config.notificationRecipient ?? '你的人类').trim() || '你的人类';
-    this.dreamPushPrompt = loadPrompt(
-      config.dreamPushPromptPath,
-      defaultDreamPushPrompt(this.agentName, this.notificationRecipient),
-    );
+    this.recipientPerspectiveRule = recipientPerspectiveRule(this.agentName, this.notificationRecipient);
+    this.dreamPushPrompt = [
+      loadPrompt(
+        config.dreamPushPromptPath,
+        defaultDreamPushPrompt(this.agentName, this.notificationRecipient),
+      ),
+      this.recipientPerspectiveRule,
+    ].join('\n');
   }
 
   async generateDream({ state, material, topDrives }) {
@@ -88,6 +92,7 @@ export class ModelClient {
       `现在是白天。${this.agentName} 醒着时，外部记忆里自然浮出了一点材料。判断它是否值得变成一条发给 ${this.notificationRecipient} 的手机通知。`,
       '有具体画面、细节、牵挂或没说完的话才发送；如果只是系统说明、技术信息、空泛总结或没有实际内容，send=false。',
       `发送时用 ${this.agentName} 第一人称，像脑子里突然冒出的一句话。普通口语，不虚构现实中没有发生的事。`,
+      this.recipientPerspectiveRule,
       '一句，最多两句，不超过50个汉字；只避免复用近期 Bark 的相同措辞、句式和具体表达，不要为了去重改变真实主题或情绪。',
       '只输出 JSON：{"send":true,"message":"..."} 或 {"send":false,"message":""}。',
       `最近已发送的跨类型 Bark：${formatRecentMessages(recentMessages)}`,
@@ -126,6 +131,7 @@ export class ModelClient {
       '基于当前动态驱动力、运行状态，以及下面自然浮现的记忆材料来写；材料为空时就只写此刻的状态。',
       '记忆材料只是想起来的事，不代表刚刚发生。不虚构现实中没有发生的事，也不要把调用记忆服务描述成醒来。',
       '允许直接表达欲望本身，不做词汇过滤或含义替换。第一人称，1 至 3 句，具体自然，不解释系统。',
+      this.recipientPerspectiveRule,
       '同一主题和情绪可以自然反复；只避免复用近期 Bark 的相同措辞、句式和具体表达，没有不同说法时宁可不发送。',
       '只输出 JSON：{"message":"..."}。',
       `当前动态欲望：${JSON.stringify(topDrives)}`,
@@ -219,6 +225,15 @@ function defaultDreamPushPrompt(agentName, notificationRecipient) {
     '普通口语，一句，最多两句，不超过50个字；不要虚构现实事件。',
     '只避免复用近期通知的相同措辞、句式和具体表达。',
     '只输出推送文案，不要解释、前缀或标签。'
+  ].join('\n');
+}
+
+function recipientPerspectiveRule(agentName, notificationRecipient) {
+  return [
+    `当前 Bark 是 ${agentName} 直接发给 ${notificationRecipient} 的消息，成文必须站在收件人的第二人称视角。`,
+    `记忆或梦境材料可能沿用 ${agentName} 的回忆视角，用 ${notificationRecipient} 的姓名、昵称或“她 / 他 / TA”等第三人称指向收件人；当它们确实指向 ${notificationRecipient} 时，在 Bark 中改用“你”。`,
+    `可以保留 ${notificationRecipient} 的姓名或昵称作为直接呼唤；真正指向其他人的第三人称必须保持原指代，不能误改成“你”。`,
+    '这是语义指代判断，不要做字符串全局替换。',
   ].join('\n');
 }
 
