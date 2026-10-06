@@ -100,6 +100,7 @@ export class OmbreClient {
   async recentMaterialWithRefs(drives = [], emotion = null) {
     const result = await this.call('breath', {
       ...emotionArgs(emotion),
+      mode: 'automatic',
       query: withDriveHint('近期重要记忆、情绪、关系变化和未完成事项', drives),
       max_results: this.config.breathMaxResults,
       max_tokens: this.config.breathMaxTokens
@@ -339,15 +340,20 @@ export class OmbreClient {
       `醒后意识：${dream.awareness}`,
       '说明：这是睡眠结算产生的梦境，不是现实事件；调用外部记忆服务不等于醒来。'
     ].join('\n');
-    const result = await this.call('hold', { content, tags: 'dream', importance: 7 });
-    const text = extractText(result);
-    const bucketId = text.match(/[a-f0-9]{12,}/i)?.[0] ?? null;
-    if (bucketId) {
-      try { await this.call('trace', { bucket_id: bucketId, dont_surface: 1 }); }
-      catch (error) { /* Existing dream path; phase-two replaces this two-step write. */ }
-    }
-    return bucketId;
+    const result = await this.call('hold', { content, tags: 'dream', importance: 7, dream_archive: true });
+    return parseDreamReceipt(extractText(result));
   }
+}
+
+export function parseDreamReceipt(text) {
+  // Notices may precede the business result. Accept exactly one official
+  // new-bucket line and the overlay's creation-time hidden acknowledgement.
+  const entries = [...String(text).matchAll(/^(新建|合并)\s*→\s*([a-f0-9]{12})(?=\s|$).*$/gm)];
+  if (entries.length !== 1 || entries[0][1] !== '新建' ||
+      !/^梦境归档：dont_surface=True$/m.test(text)) {
+    throw new Error('ombre_dream_write_uncertain');
+  }
+  return entries[0][2];
 }
 
 // 把当前最强的几个驱动力拼进 breath 的 query，让"此刻想什么"影响"想起什么"。

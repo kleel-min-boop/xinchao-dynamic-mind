@@ -80,9 +80,11 @@ test('reads retain their safe session-refresh retry and 15s deadline', async () 
 
 test('dream hold no longer sends fusion-only auto/source fields', async () => {
   const calls = [];
-  const c = client(async (payload) => { calls.push(payload.params); return { result: { content: [] } }; });
+  const c = client(async (payload) => { calls.push(payload.params); return { result: { content: [{ type: 'text', text: '新建→abcdef123456 生活\n梦境归档：dont_surface=True' }] } }; });
   await c.storeDream({ dream: 'fixture', residue: 'fixture', awareness: 'fixture' });
-  assert.deepEqual(Object.keys(calls[0].arguments).sort(), ['content', 'importance', 'tags']);
+  assert.deepEqual(Object.keys(calls[0].arguments).sort(), ['content', 'dream_archive', 'importance', 'tags']);
+  assert.equal(calls[0].arguments.dream_archive, true);
+  assert.equal(calls.length, 1, 'no separate trace write');
 });
 
 test('completed long write without ID is persisted, duplicates and restart do not resend', async () => {

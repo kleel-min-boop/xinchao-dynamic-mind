@@ -9,6 +9,7 @@ import { recordSurfacing, resolveAwareness, scanAwareness, awarenessSummary } fr
 import { detectSelfSignals, renderNowLine, SELF_REPORT_TYPES } from './self-signals.js';
 import { BlackBox, renderBoxList } from './black-box.js';
 import { INTERACTION_TYPES, applyDriveFeedback, applyMemoryResonance, applyOmbreHeartbeat, applyOutputReflux, applyLongingNudge, barkAllowed, breathDreamContext, contactIdleAllowed, computeLonging, daytimeEmergenceAllowed, dreamAllowed, newState, pickIntent, proactiveBarkAllowed, recordBark, recordDaytimeEmergence, recordDream, scheduleDaytimeEmergence, settleAndApplyConversationEvent, settleState, topDrives, computeAnticipation, localDayAndHour, applySurfacedThought, surfacedDriveKey, recentSurfacedBucketIds, recordSurfacedBuckets } from './engine.js';
+import { archiveRecordedDream } from './dream-archive.js';
 import { buildInteractionBridgeMessage } from './interaction-messages.js';
 import { selectUniqueBark } from './bark-dedupe.js';
 import { StateStore } from './state-store.js';
@@ -333,11 +334,6 @@ async function runCycle() {
         driveKey: topDrives(state)[0]?.key ?? null,
         sleepHours: sleepHours == null ? null : Number(sleepHours.toFixed(2)),
       };
-      if (!config.shadowMode && config.ombre.writeEnabled) {
-        try { dream.ombreBucketId = await ombre.storeDream(dream); }
-        catch (error) { log('ombre_write_failed', { message: error.message }); }
-      }
-
       state = await updateState({
         type: 'dream_recorded',
         source: config.shadowMode ? 'rule-seed' : 'model',
@@ -347,6 +343,13 @@ async function runCycle() {
         if (!dreamAllowed(latest, now, config.dreamMinIntervalHours, config.dreamMaxPerDay)) return latest;
         return recordDream(latest, dream);
       });
+      if (!config.shadowMode && config.ombre.writeEnabled && state.recentDreams.some((item) => item.id === dream.id)) {
+        const archived = await archiveRecordedDream(dream.id,
+          (type, mutate) => updateState({ type, source: 'dream', details: { dreamId: dream.id }, at: now }, mutate),
+          (item) => ombre.storeDream(item), now);
+        state = archived.state;
+        log('dream_archive_result', { dreamId: dream.id, status: archived.status, reused: archived.reused });
+      }
       dreamCreated = true;
       log('dream_settled', { source: dream.source, shadow: config.shadowMode, usedBreath: Boolean(material), revision: state.revision });
 
