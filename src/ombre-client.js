@@ -5,6 +5,8 @@ import { SYSTEM_VERSION } from './version.js';
 
 // 梦不吃技术：这些域的记忆不进梦的原料（机房梦就是这么来的）
 const DREAM_EXCLUDE_DOMAINS = new Set(['技术', '数字', '编程', '事务']);
+const READ_TOOLS = new Set(['breath', 'breath_search', 'breath_advanced', 'dream', 'pulse']);
+const WRITE_TIMEOUT_MS = 120000;
 
 export class OmbreClient {
   constructor(config) {
@@ -16,7 +18,7 @@ export class OmbreClient {
   async post(payload, expectBody = true, timeoutMs = 15000) {
     const headers = {
       'Content-Type': 'application/json',
-      Accept: 'application/json, text/event-stream',
+      Accept: 'application/json',
       'X-Ombre-Caller': 'dynamic-mind',
     };
     if (this.config.token) headers.Authorization = `Bearer ${this.config.token}`;
@@ -55,13 +57,17 @@ export class OmbreClient {
     return this.initializePromise;
   }
 
-  async call(name, args = {}, timeoutMs = 15000) {
+  async call(name, args = {}, timeoutMs = READ_TOOLS.has(name) ? 15000 : WRITE_TIMEOUT_MS) {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       await this.initialize();
       try {
-        return await this.post({ jsonrpc: '2.0', id: Date.now(), method: 'tools/call', params: { name, arguments: args } }, true, timeoutMs);
+        const result = await this.post({ jsonrpc: '2.0', id: Date.now(), method: 'tools/call', params: { name, arguments: args } }, true, timeoutMs);
+        if (result?.error || result?.result?.isError || result?.isError) throw new Error(`ombre_tool_error:${name}`);
+        return result;
       } catch (error) {
-        if (attempt || !/HTTP (400|401|404)/.test(error.message)) throw error;
+        // A failed response does not prove a write failed. Refresh/replay only
+        // read operations; the owner of a write records its uncertain outcome.
+        if (!READ_TOOLS.has(name) || attempt || !/HTTP (400|401|404)/.test(error.message)) throw error;
         this.sessionId = null;
         this.stateless = false;
       }
@@ -289,14 +295,10 @@ export class OmbreClient {
     if (!this.config.writeEnabled) throw new Error('ombre_write_disabled');
     const content = String(item?.content ?? '').trim();
     if (!content) throw new Error('box_content_empty');
-    const result = await this.call('grow', {
-      content,
-      source: 'xinchao-box-keep',
-    });
-    const text = extractText(result);
-    const bucketId = parseGrowBucketIds(text)[0] ?? null;
-    if (!bucketId) throw new Error('ombre_grow_missing_bucket_id');
-    return bucketId;
+    const result = await this.call('grow', { content });
+    // Official 3.6.14 returns titles for newly created long-content buckets.
+    // A successful write need not disclose an ID. Never infer one from a title.
+    return parseGrowReceipt(extractText(result));
   }
 
   // 自我觉察确认后写进 OB 的 I（候选桶，之后由 dream 见证升正式条目）。只在写开关打开时可用。
@@ -337,20 +339,12 @@ export class OmbreClient {
       `醒后意识：${dream.awareness}`,
       '说明：这是睡眠结算产生的梦境，不是现实事件；调用外部记忆服务不等于醒来。'
     ].join('\n');
-    const result = await this.call('hold', {
-      content,
-      tags: 'dream',
-      importance: 7,
-      auto: true,
-      source: 'xinchao-dream',
-    });
+    const result = await this.call('hold', { content, tags: 'dream', importance: 7 });
     const text = extractText(result);
     const bucketId = text.match(/[a-f0-9]{12,}/i)?.[0] ?? null;
-    // 梦是睡眠结算的残渣，不该作为真实记忆回到 breath（否则下次梦引擎会把旧梦当素材捞出 → 梦吃梦）。
-    // 出生即标 dont_surface=1：仍存在 OB、仍显示在梦境页（来自心潮 state），但不进 breath 召回。
     if (bucketId) {
       try { await this.call('trace', { bucket_id: bucketId, dont_surface: 1 }); }
-      catch (error) { /* best-effort：标记失败不阻断存梦本身 */ }
+      catch (error) { /* Existing dream path; phase-two replaces this two-step write. */ }
     }
     return bucketId;
   }
@@ -459,13 +453,13 @@ export function materialWithRefs(text, maxChars = 10000) {
   };
 }
 
-// grow 返回的人类可读结果中，真实桶 ID 只出现在“→”或每条 📎/📝 之后。
-// 明确排除 batch:g_... 和正文中的偶然字符串，不做宽泛 ID 猜测。
+// Official 3.6.14: shortpath arrows and merged 📎 lines disclose IDs;
+// new 📝 lines disclose titles, even when a title happens to look like hex.
 export function parseGrowBucketIds(text) {
   const ids = [];
   const seen = new Set();
   const source = String(text ?? '');
-  const patterns = [/(?:→|[📎📝])\s*([A-Za-z0-9._-]{6,160})/g];
+  const patterns = [/^(?:新建|合并)\s*→\s*([a-f0-9]{12})\s*\|/gm, /^📎([a-f0-9]{12})\s*$/gm];
   for (const pattern of patterns) {
     let match;
     while ((match = pattern.exec(source)) !== null) {
@@ -477,6 +471,19 @@ export function parseGrowBucketIds(text) {
     }
   }
   return ids;
+}
+
+export function parseGrowReceipt(text) {
+  const source = String(text ?? '');
+  const bucketIds = parseGrowBucketIds(source);
+  if (/^短内容已按 hold 路径保存为单条记忆，没有拆分。$/m.test(source) && bucketIds.length === 1) {
+    return { status: 'completed', total: 1, saved: 1, bucketIds, batchId: null };
+  }
+  const summary = source.match(/^(\d+)条(?:\(预拆分·逐字\))?\|新(\d+)合(\d+) batch:(g_[a-f0-9]{12})$/m);
+  if (!summary) return { status: 'uncertain', bucketIds: [], batchId: null };
+  const total = Number(summary[1]), saved = Number(summary[2]) + Number(summary[3]);
+  const status = total > 0 && saved === total ? 'completed' : saved > 0 && saved < total ? 'partial' : 'uncertain';
+  return { status, total, saved, bucketIds, batchId: summary[4] };
 }
 
 function parseMcp(text) {

@@ -106,6 +106,44 @@ export class BlackBox {
     });
   }
 
+  // Fence one explicit keep operation in this item's own durable state. The
+  // claim is committed before sending; a crash/timeout is not permission to
+  // send again. No content-wide dedupe window or memory-admission policy.
+  async keep(id, write, now = new Date()) {
+    let claimed = null, previous = null;
+    await this.store.update((box) => {
+      const item = box.items.find((x) => x.id === String(id ?? '').trim());
+      if (!item) { previous = { status: 'not_found' }; return box; }
+      if (item.kept || item.keepWrite) {
+        previous = item.keepWrite?.status === 'pending'
+          ? { status: 'uncertain', bucketIds: [] }
+          : item.keepWrite ?? { status: 'completed', bucketIds: [] };
+        return box;
+      }
+      item.keepWrite = { status: 'pending', at: iso(now) };
+      claimed = structuredClone(item);
+      this._audit(box, 'keep_start', item.id, now);
+      return box;
+    });
+    if (!claimed) return { ...previous, reused: true };
+    let receipt;
+    try {
+      receipt = await write(claimed);
+    } catch {
+      receipt = { status: 'uncertain', bucketIds: [] };
+    }
+    await this.store.update((box) => {
+      const item = box.items.find((x) => x.id === claimed.id);
+      if (item) {
+        item.keepWrite = { ...receipt, at: iso(now) };
+        if (receipt.status === 'completed') item.kept = { bucketId: receipt.bucketIds?.[0] ?? null, at: iso(now) };
+        this._audit(box, 'keep_' + receipt.status, item.id, now);
+      }
+      return box;
+    });
+    return receipt;
+  }
+
   // 信封用：要露头的条目，只给 id / kind / 标题（没标题就取正文前 20 字）
   async surfaced(now = new Date(), limit = 3) {
     const items = await this.list(now);
@@ -152,7 +190,7 @@ export function renderBoxList(items) {
   return items.map((x) => {
     const created = x.createdAt.slice(0, 16).replace('T', ' ');
     const exp = x.expiresAt ? `，${x.expiresAt.slice(0, 10)} 到期` : '';
-    const kept = x.kept ? '，已搬进 OB' : '';
+    const kept = x.kept ? '，已搬进 OB' : x.keepWrite ? '，OB 写入待核验，请勿重复提交' : '';
     const surf = x.surface ? '，会在信封里提醒' : '';
     const when = x.when ? `，事在 ${x.when.slice(0, 10)}` : '';
     const remind = x.remindAt ? (x.remindedAt ? `，${x.remindAt.slice(5, 16).replace('T', ' ')} 提醒过` : `，${x.remindAt.slice(5, 16).replace('T', ' ')} 提醒`) : '';

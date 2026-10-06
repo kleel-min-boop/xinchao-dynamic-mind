@@ -1029,10 +1029,14 @@ async function handleBox(input = {}, now = new Date()) {
     const item = await blackBox.read(input.id, now);
     if (!item) return { text: `匣子里没有这条：${input.id ?? ''}`, data: { found: false } };
     if (!config.ombre.writeEnabled || config.shadowMode) return { text: 'OB 写入没开，搬不出去。', data: { kept: false } };
-    const bucketId = await ombre.storeHeldOutput({ content: item.text });
-    await blackBox.markKept(item.id, bucketId, now);
-    log('box_keep', { id: item.id, bucketId });
-    return { text: `搬进 OB 了：${item.id} → ${bucketId}。匣子里那条还在，想烧就烧。`, data: { kept: true, bucketId } };
+    const receipt = await blackBox.keep(item.id, (held) => ombre.storeHeldOutput({ content: held.text }), now);
+    const bucketId = receipt.bucketIds?.[0] ?? null;
+    const kept = receipt.status === 'completed';
+    log('box_keep', { id: item.id, status: receipt.status });
+    const text = kept
+      ? `${receipt.reused ? '之前已搬进 OB，本次没有重复写入' : '搬进 OB 了'}：${item.id}${bucketId ? ` → ${bucketId}` : '（官方结果未提供新桶 ID）'}。匣子里那条还在，想烧就烧。`
+      : `OB 写入${receipt.status === 'partial' ? '只完成了一部分' : '结果尚未确认'}：${item.id}。为避免重复写入，不再次提交；需核验原操作结果。`;
+    return { text, data: { kept, bucketId, receipt } };
   }
   throw new Error('action 必须是 put / list / read / burn / keep');
 }
