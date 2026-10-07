@@ -1,3 +1,4 @@
+// Zer maintenance acceptance: lane-xinchao-20261007
 // 【网页与看板】连接自检：记忆、桥、模型各连没连上，给网页和排错用。
 // 代码地图见 src/README.md。
 
